@@ -4,25 +4,15 @@
       <h1 class="title">註冊</h1>
       <form @submit.prevent="handleRegister" class="form">
         <div class="form-group">
-          <label for="username">用戶名</label>
+          <label for="username">使用者名稱</label>
           <input
             id="username"
             v-model="form.username"
             type="text"
             required
-            placeholder="請輸入用戶名"
+            placeholder="請輸入使用者名稱（至少 4 個字元）"
             class="input"
-          />
-        </div>
-        <div class="form-group">
-          <label for="email">電子郵件</label>
-          <input
-            id="email"
-            v-model="form.email"
-            type="email"
-            required
-            placeholder="請輸入電子郵件"
-            class="input"
+            minlength="4"
           />
         </div>
         <div class="form-group">
@@ -33,6 +23,18 @@
             type="password"
             required
             placeholder="請輸入密碼（至少 6 個字元）"
+            class="input"
+            minlength="6"
+          />
+        </div>
+        <div class="form-group">
+          <label for="confirmPassword">確認密碼</label>
+          <input
+            id="confirmPassword"
+            v-model="form.confirmPassword"
+            type="password"
+            required
+            placeholder="請再次輸入密碼"
             class="input"
             minlength="6"
           />
@@ -65,8 +67,8 @@ const authStore = useAuthStore()
 
 const form = ref({
   username: '',
-  email: '',
-  password: ''
+  password: '',
+  confirmPassword: ''
 })
 
 const loading = ref(false)
@@ -76,12 +78,18 @@ const success = ref('')
 const handleRegister = async () => {
   error.value = ''
   success.value = ''
+  
+  if (form.value.password !== form.value.confirmPassword) {
+    error.value = '兩次密碼輸入不一致'
+    return
+  }
+  
   loading.value = true
 
   const result = await authStore.register(
     form.value.username,
-    form.value.email,
-    form.value.password
+    form.value.password,
+    form.value.confirmPassword
   )
 
   if (result.success) {
@@ -211,4 +219,3 @@ const handleRegister = async () => {
   text-decoration: underline;
 }
 </style>
-

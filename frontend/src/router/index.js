@@ -19,6 +19,11 @@ const routes = [
     name: 'Register',
     component: () => import('@/views/RegisterView.vue'),
     meta: { requiresGuest: true }
+  },
+  {
+    path: '/oauth/callback',
+    name: 'OAuthCallback',
+    component: () => import('@/views/OAuthCallbackView.vue')
   }
 ]
 

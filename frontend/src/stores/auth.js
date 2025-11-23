@@ -22,27 +22,28 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('user')
   }
 
-  const login = async (username, password) => {
+  const login = async (username, password, captchaAnswer, captchaToken) => {
     try {
-      const response = await authApi.login(username, password)
-      setAuth(response.data.access_token, response.data.user)
+      const response = await authApi.login(username, password, captchaAnswer, captchaToken)
+      // API 返回格式: { message, token, user, expires_in }
+      setAuth(response.data.token, { username: response.data.user })
       return { success: true }
     } catch (error) {
       return {
         success: false,
-        error: error.response?.data?.error || '登入失敗'
+        error: error.response?.data?.message || '登入失敗'
       }
     }
   }
 
-  const register = async (username, email, password) => {
+  const register = async (username, password, confirmPassword) => {
     try {
-      await authApi.register(username, email, password)
+      await authApi.register(username, password, confirmPassword)
       return { success: true }
     } catch (error) {
       return {
         success: false,
-        error: error.response?.data?.error || '註冊失敗'
+        error: error.response?.data?.message || '註冊失敗'
       }
     }
   }
@@ -54,16 +55,45 @@ export const useAuthStore = defineStore('auth', () => {
   const fetchProfile = async () => {
     try {
       const response = await authApi.getProfile()
+      // API 返回格式: { message, user_id, username, email, display_name, is_line_linked, is_google_linked }
       user.value = response.data
       localStorage.setItem('user', JSON.stringify(response.data))
-      return { success: true }
+      return { success: true, data: response.data }
     } catch (error) {
       if (error.response?.status === 401) {
         clearAuth()
       }
       return {
         success: false,
-        error: error.response?.data?.error || '取得個人資料失敗'
+        error: error.response?.data?.message || '取得個人資料失敗'
+      }
+    }
+  }
+
+  const updateUsername = async (newUsername) => {
+    try {
+      const response = await authApi.changeUsername(newUsername)
+      // API 返回新的 token，需要更新
+      if (response.data.token) {
+        setAuth(response.data.token, user.value)
+      }
+      return { success: true, data: response.data }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.message || '變更使用者名稱失敗'
+      }
+    }
+  }
+
+  const updatePassword = async (oldPassword, newPassword, confirmPassword) => {
+    try {
+      await authApi.changePassword(oldPassword, newPassword, confirmPassword)
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.response?.data?.message || '變更密碼失敗'
       }
     }
   }
@@ -72,10 +102,13 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     user,
     isAuthenticated,
+    setAuth,
+    clearAuth,
     login,
     register,
     logout,
-    fetchProfile
+    fetchProfile,
+    updateUsername,
+    updatePassword
   }
 })
-
