@@ -7,6 +7,9 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref(JSON.parse(localStorage.getItem('user') || 'null'))
 
   const isAuthenticated = computed(() => !!token.value)
+  const userRole = computed(() => user.value?.role || 'customer')
+  const isCustomer = computed(() => userRole.value === 'customer')
+  const isMerchant = computed(() => userRole.value === 'merchant')
 
   const setAuth = (newToken, userData) => {
     token.value = newToken
@@ -25,9 +28,17 @@ export const useAuthStore = defineStore('auth', () => {
   const login = async (username, password, captchaAnswer, captchaToken) => {
     try {
       const response = await authApi.login(username, password, captchaAnswer, captchaToken)
-      // API 返回格式: { message, token, user, expires_in }
-      setAuth(response.data.token, { username: response.data.user })
-      return { success: true }
+      // API 返回格式: { message, token, user, role, display_name, email, phone, merchant?, expires_in }
+      const userData = {
+        username: response.data.user,
+        role: response.data.role || 'customer',
+        display_name: response.data.display_name,
+        email: response.data.email,
+        phone: response.data.phone,
+        merchant: response.data.merchant
+      }
+      setAuth(response.data.token, userData)
+      return { success: true, role: userData.role }
     } catch (error) {
       return {
         success: false,
@@ -36,9 +47,9 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  const register = async (username, password, confirmPassword) => {
+  const register = async (username, password, confirmPassword, role = 'customer', additionalData = {}) => {
     try {
-      await authApi.register(username, password, confirmPassword)
+      await authApi.register(username, password, confirmPassword, role, additionalData)
       return { success: true }
     } catch (error) {
       return {
@@ -102,6 +113,9 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     user,
     isAuthenticated,
+    userRole,
+    isCustomer,
+    isMerchant,
     setAuth,
     clearAuth,
     login,

@@ -1,38 +1,87 @@
-# 前後端分離登入系統
+# 餐廳訂餐系統 - 身分分流平台
 
-這是一個使用 Python Flask + MySQL (XAMPP) 作為後端，Vue 3 作為前端的登入系統專案。
+這是一個使用 Python Flask + MySQL (XAMPP) 作為後端，Vue 3 作為前端的**餐廳訂餐系統**，支援**顧客**和**商家**兩種角色的身分分流。
+
+## 🎯 系統特色
+
+- **身分分流系統**：註冊時選擇角色（顧客/商家），登入後自動導向對應介面
+- **顧客介面**：瀏覽餐廳、查看菜單、下訂單、訂單追蹤
+- **商家介面**：接單看板、訂單管理、菜單管理、營業統計
+- **共用元件庫**：統一的 UI 元件（按鈕、輸入框、卡片、下拉選單）
+- **完整認證系統**：JWT + OAuth（LINE、Google）+ 帳號鎖定機制
+
+## 📚 文件導覽
+
+- **[RESTAURANT_SYSTEM_README.md](./RESTAURANT_SYSTEM_README.md)** - 餐廳系統完整說明
+- **[DEVELOPMENT_GUIDE.md](./DEVELOPMENT_GUIDE.md)** - 開發指南和元件使用說明
+- **本文件** - 基礎安裝和設定指南
 
 ## 專案結構
 
 ```
 authWeb/
-├── backend/          # Python Flask 後端
-│   ├── app.py       # 主應用程式
+├── backend/
+│   ├── app.py                    # Flask 主應用（包含角色系統 API）
+│   ├── migrations/               # 資料庫遷移腳本
+│   │   └── add_user_role.sql    # 角色系統遷移
 │   ├── requirements.txt
 │   └── .env.example
-├── frontend/        # Vue 3 前端
+├── frontend/
 │   ├── src/
-│   │   ├── api/     # API 服務
-│   │   ├── stores/  # Pinia 狀態管理
-│   │   ├── views/   # 頁面組件
-│   │   ├── router/  # 路由配置
+│   │   ├── api/                  # API 服務層
+│   │   │   └── auth.js          # 認證 API（支援角色）
+│   │   ├── components/
+│   │   │   ├── common/          # 共用元件庫 ⭐
+│   │   │   │   ├── BaseButton.vue
+│   │   │   │   ├── BaseInput.vue
+│   │   │   │   ├── BaseCard.vue
+│   │   │   │   └── BaseSelect.vue
+│   │   │   ├── Header.vue       # 頂部導航欄
+│   │   │   └── Sidebar.vue      # 側邊欄
+│   │   ├── layouts/
+│   │   │   └── DashboardLayout.vue  # Dashboard 佈局
+│   │   ├── stores/
+│   │   │   └── auth.js          # 認證狀態管理（包含角色）
+│   │   ├── views/               # 頁面組件
+│   │   ├── router/
+│   │   │   └── index.js         # 路由配置（角色守衛）
 │   │   └── main.js
-│   ├── package.json
-│   └── vite.config.js
-└── README.md
+│   └── package.json
+├── README.md                     # 本文件
+├── RESTAURANT_SYSTEM_README.md   # 餐廳系統說明 ⭐
+└── DEVELOPMENT_GUIDE.md          # 開發指南 ⭐
 ```
 
 ## 功能特色
 
-- ✅ 用戶註冊（無需驗證碼，僅支援帳號密碼註冊）
+### 🔐 認證系統
+- ✅ 用戶註冊（支援角色選擇：顧客/商家）
 - ✅ 用戶登入（需要驗證碼）
 - ✅ JWT 認證
-- ✅ 個人資料頁面
-- ✅ 路由守衛
-- ✅ 響應式設計
-- ✅ 前後端分離架構
 - ✅ OAuth 登入（LINE、Google）- **自動註冊功能**
-- ✅ 帳號鎖定機制（可選，需資料庫支援）
+- ✅ 帳號鎖定機制（防暴力破解）
+- ✅ 路由守衛和角色權限控制
+
+### 👥 顧客功能
+- ✅ 瀏覽餐廳列表
+- ✅ 查看餐廳菜單
+- ✅ 購物車功能
+- ✅ 下訂單
+- ✅ 訂單歷史和追蹤
+- ✅ 個人資料管理
+
+### 🏪 商家功能
+- ✅ 接單看板（Dashboard）
+- ✅ 訂單管理（接單、準備中、完成）
+- ✅ 菜單管理（新增、編輯、刪除）
+- ✅ 商家資料管理
+- ✅ 營業統計報表
+
+### 🎨 共用元件庫
+- ✅ BaseButton - 統一按鈕組件（7 種樣式、3 種尺寸）
+- ✅ BaseInput - 統一輸入框組件（支援驗證、圖標、密碼切換）
+- ✅ BaseCard - 統一卡片組件（4 種變體）
+- ✅ BaseSelect - 統一下拉選單組件
 
 **OAuth 登入說明**：
 - OAuth 登入按鈕僅在登入頁面顯示
@@ -63,7 +112,7 @@ authWeb/
 1. **啟動 XAMPP 並確保 MySQL 服務正在運行**
 
 2. **建立資料庫和資料表**：
-   
+
    開啟 phpMyAdmin (http://localhost/phpmyadmin) 或使用 MySQL 命令列，執行以下 SQL 指令：
 
 ```sql
@@ -72,68 +121,30 @@ CREATE DATABASE IF NOT EXISTS vue_auth CHARACTER SET utf8mb4 COLLATE utf8mb4_uni
 
 -- 使用資料庫
 USE vue_auth;
-
--- 建立 users 資料表（基本版本）
-CREATE TABLE IF NOT EXISTS users (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(100) NULL,
-    password VARCHAR(255) NULL,
-    display_name VARCHAR(100) NULL,
-    line_id VARCHAR(100) NULL UNIQUE,
-    google_id VARCHAR(100) NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 添加索引以提高查詢效能
-CREATE INDEX IF NOT EXISTS idx_line_id ON users(line_id);
-CREATE INDEX IF NOT EXISTS idx_google_id ON users(google_id);
-CREATE INDEX IF NOT EXISTS idx_username ON users(username);
 ```
 
-**可選：啟用帳號鎖定功能**
+3. **執行資料庫遷移腳本**（包含角色系統）：
 
-如果需要啟用登入失敗鎖定功能（5 次失敗後鎖定 30 分鐘），可以執行以下 SQL 添加額外欄位：
-
-```sql
-USE vue_auth;
-
--- 添加帳號鎖定相關欄位
--- 注意：如果欄位已存在會報錯，可以忽略錯誤或先檢查欄位是否存在
-
--- 方法 1：直接添加（如果欄位不存在）
-ALTER TABLE users 
-ADD COLUMN failed_attempts INT DEFAULT 0,
-ADD COLUMN lockout_until DATETIME NULL;
-
--- 方法 2：使用條件判斷（適用於 MariaDB 10.2.7+）
--- ALTER TABLE users 
--- ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0,
--- ADD COLUMN IF NOT EXISTS lockout_until DATETIME NULL;
+```bash
+# 在 MySQL 中執行遷移腳本
+mysql -u root -p vue_auth < backend/migrations/add_user_role.sql
 ```
 
-> **注意**：
-> - 如果資料庫中沒有 `failed_attempts` 和 `lockout_until` 欄位，應用程式仍可正常運行，只是不會啟用帳號鎖定功能。應用程式會自動檢測這些欄位是否存在。
-> - MySQL 5.7 不支援 `IF NOT EXISTS`，如果欄位已存在會報錯，可以忽略該錯誤。
-> - 建議使用 `backend/database_update.sql` 腳本，它會處理欄位檢查。
+或在 phpMyAdmin 中直接執行 `backend/migrations/add_user_role.sql` 文件。
 
-**或使用更新腳本**：
+**遷移腳本會創建以下資料表：**
+- `users` - 用戶表（包含 role 欄位）
+- `merchants` - 商家表
+- `menu_items` - 菜單項目表
+- `orders` - 訂單表
+- `order_items` - 訂單項目表
 
-如果資料庫已經存在，可以使用 `backend/database_update.sql` 腳本來更新資料庫結構：
-
-```sql
--- 在 MySQL 中執行
-source backend/database_update.sql;
-```
-
-或在 phpMyAdmin 中直接執行該 SQL 文件。
-
-3. 進入後端目錄：
+4. 進入後端目錄：
 ```bash
 cd backend
 ```
 
-4. 建立虛擬環境（建議）：
+5. 建立虛擬環境（建議）：
 ```bash
 python -m venv venv
 # Windows
@@ -142,12 +153,12 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-5. 安裝依賴：
+6. 安裝依賴：
 ```bash
 pip install -r requirements.txt
 ```
 
-6. 設定環境變數：
+7. 設定環境變數：
 ```bash
 # 複製 env.example 為 .env
 # Windows
@@ -162,7 +173,7 @@ cp env.example .env
 # DB_USER=root
 # DB_PASSWORD=你的MySQL密碼（如果有的話）
 # DB_NAME=vue_auth
-# 
+#
 # OAuth 設定（可選，如果不需要 OAuth 登入可以跳過）：
 # LINE_CLIENT_ID=your-line-client-id
 # LINE_CLIENT_SECRET=your-line-client-secret
@@ -170,6 +181,13 @@ cp env.example .env
 # GOOGLE_CLIENT_SECRET=your-google-client-secret
 # FRONTEND_URL=http://localhost:5173  # 前端 URL（用於 OAuth 回調重定向）
 ```
+
+8. 執行後端：
+```bash
+python app.py
+```
+
+後端將在 `http://localhost:5000` 運行
 
 ### OAuth 登入設定（可選）
 
@@ -355,13 +373,6 @@ cp env.example .env
   - 解決：確保兩邊的 URL 完全一致（包括 http/https、端口號等）
 ```
 
-7. 執行後端：
-```bash
-python app.py
-```
-
-後端將在 `http://localhost:5000` 運行
-
 ### 前端設定
 
 1. 進入前端目錄：
@@ -381,27 +392,53 @@ npm run dev
 
 前端將在 `http://localhost:5173` 運行
 
+## 快速開始
+
+### 測試顧客流程
+
+1. 訪問 `http://localhost:5173/register`
+2. 選擇角色：**顧客**
+3. 填寫用戶名和密碼，完成註冊
+4. 登入後自動導向餐廳首頁
+5. 瀏覽餐廳、查看菜單、下訂單
+
+### 測試商家流程
+
+1. 訪問 `http://localhost:5173/register`
+2. 選擇角色：**商家**
+3. 填寫用戶名、密碼和商家名稱，完成註冊
+4. 登入後自動導向接單看板
+5. 查看訂單、管理菜單、處理訂單
+
 ## API 端點
 
-### POST /api/register
-註冊新用戶
+### 認證 API
+
+#### POST /api/register
+註冊新用戶（支援角色選擇）
 
 請求體：
 ```json
 {
   "username": "testuser",
   "password": "password123",
-  "confirm_password": "password123"
+  "confirm_password": "password123",
+  "role": "customer",
+  "display_name": "測試用戶",
+  "email": "test@example.com",
+  "phone": "0912345678",
+  "business_name": "我的餐廳"
 }
 ```
 
 **注意**：
+- `role`: 必填，可選值為 `customer`（顧客）或 `merchant`（商家）
+- `business_name`: 僅當 `role` 為 `merchant` 時需要
 - 使用者名稱至少需要 4 個字元
 - 密碼至少需要 6 個字元
-- 不需要驗證碼（註冊功能已移除驗證碼要求）
 
-### POST /api/login
-用戶登入
+#### POST /api/login
+用戶登入（返回角色資訊）
 
 請求體：
 ```json
@@ -413,21 +450,32 @@ npm run dev
 }
 ```
 
-**注意**：
-- 登入需要驗證碼（先呼叫 GET /api/captcha 取得驗證碼圖片和 token）
-- 如果資料庫有 `failed_attempts` 和 `lockout_until` 欄位，5 次登入失敗後會鎖定帳號 30 分鐘
-
 回應：
 ```json
 {
   "message": "登入成功",
   "token": "jwt_token_here",
   "user": "testuser",
+  "role": "customer",
+  "display_name": "測試用戶",
+  "email": "test@example.com",
+  "phone": "0912345678",
+  "merchant": {
+    "id": 1,
+    "business_name": "我的餐廳",
+    "business_type": "中式料理",
+    "rating": 4.5
+  },
   "expires_in": 1800
 }
 ```
 
-### GET /api/captcha
+**注意**：
+- 登入需要驗證碼（先呼叫 GET /api/captcha 取得驗證碼圖片和 token）
+- 如果是商家角色，回應中會包含 `merchant` 物件
+- 5 次登入失敗後會鎖定帳號 30 分鐘
+
+#### GET /api/captcha
 取得驗證碼圖片和 token（用於登入）
 
 回應：
@@ -438,8 +486,8 @@ npm run dev
 }
 ```
 
-### GET /api/profile
-取得用戶個人資料（需要 JWT token）
+#### GET /api/profile
+取得用戶個人資料（包含角色和商家資訊）
 
 Headers:
 ```
@@ -452,12 +500,49 @@ Authorization: Bearer <token>
   "message": "test success",
   "user_id": 1,
   "username": "testuser",
+  "role": "merchant",
   "email": "test@example.com",
-  "display_name": null,
+  "display_name": "測試用戶",
+  "phone": "0912345678",
   "is_line_linked": false,
-  "is_google_linked": false
+  "is_google_linked": false,
+  "merchant": {
+    "id": 1,
+    "business_name": "我的餐廳",
+    "business_type": "中式料理",
+    "address": "台北市信義區",
+    "description": "提供美味的中式料理",
+    "is_verified": true,
+    "rating": 4.5
+  }
 }
 ```
+
+### 商家 API
+
+#### GET /api/merchants
+獲取商家列表
+
+#### GET /api/merchants/:id
+獲取商家詳情
+
+#### GET /api/merchants/:id/menu
+獲取商家菜單
+
+### 訂單 API
+
+#### GET /api/orders
+獲取訂單列表（根據角色返回不同數據）
+- 顧客：返回自己的訂單
+- 商家：返回自己店鋪的訂單
+
+#### POST /api/orders
+創建訂單
+
+#### PUT /api/orders/:id/status
+更新訂單狀態（僅商家）
+
+**詳細 API 文件請參考 [RESTAURANT_SYSTEM_README.md](./RESTAURANT_SYSTEM_README.md)**
 
 ## 安全注意事項
 

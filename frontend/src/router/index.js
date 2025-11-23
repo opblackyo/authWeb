@@ -1,12 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import DashboardLayout from '@/layouts/DashboardLayout.vue'
 
 const routes = [
   {
     path: '/',
-    name: 'Home',
-    component: () => import('@/views/HomeView.vue'),
-    meta: { requiresAuth: true }
+    redirect: '/dashboard'
   },
   {
     path: '/login',
@@ -24,6 +23,37 @@ const routes = [
     path: '/oauth/callback',
     name: 'OAuthCallback',
     component: () => import('@/views/OAuthCallbackView.vue')
+  },
+  {
+    path: '/',
+    component: DashboardLayout,
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: 'dashboard',
+        name: 'Dashboard',
+        component: () => import('@/views/DashboardView.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
+        path: 'profile',
+        name: 'Profile',
+        component: () => import('@/views/ProfileView.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
+        path: 'settings',
+        name: 'Settings',
+        component: () => import('@/views/SettingsView.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
+        path: 'account',
+        name: 'Account',
+        component: () => import('@/views/HomeView.vue'),
+        meta: { requiresAuth: true }
+      }
+    ]
   }
 ]
 
@@ -39,7 +69,7 @@ router.beforeEach((to, from, next) => {
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     next({ name: 'Login' })
   } else if (to.meta.requiresGuest && authStore.isAuthenticated) {
-    next({ name: 'Home' })
+    next({ name: 'Dashboard' })
   } else {
     next()
   }

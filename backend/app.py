@@ -308,56 +308,103 @@ def register():
         username = data.get('username')
         password = data.get('password')
         confirm_password = data.get('confirm_password')
-        
+        role = data.get('role', 'customer')  # 新增：角色欄位，默認為顧客
+        display_name = data.get('display_name', '')  # 新增：顯示名稱
+        email = data.get('email', '')  # 新增：電子郵件
+        phone = data.get('phone', '')  # 新增：電話號碼
+
         # 驗證輸入
         if not username or not password or not confirm_password:
             return jsonify({'message': '所有欄位都是必填的'}), 400
-        
+
+        # 驗證角色
+        if role not in ['customer', 'merchant']:
+            return jsonify({'message': '無效的角色類型'}), 400
+
         # 驗證密碼長度
         if len(password) < 6:
             return jsonify({'message': '密碼長度至少需要 6 個字元'}), 400
-        
+
         # 驗證使用者名稱長度
         if len(username) < 4:
             return jsonify({'message': '使用者名稱至少需要 4 個字元'}), 400
-        
+
         # 驗證密碼一致性
         if password != confirm_password:
             return jsonify({'message': '兩次密碼輸入不一致'}), 400
-        
+
         # 檢查用戶是否已存在
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cursor.execute('SELECT id FROM users WHERE username = %s', (username,))
         if cursor.fetchone():
             conn.close()
             return jsonify({'message': '此帳號已被註冊'}), 409
-        
+
+        # 如果提供了 email，檢查是否已被使用
+        if email:
+            cursor.execute('SELECT id FROM users WHERE email = %s', (email,))
+            if cursor.fetchone():
+                conn.close()
+                return jsonify({'message': '此電子郵件已被使用'}), 409
+
         # 建立新用戶
         hashed_password = generate_password_hash(password)
-        # 檢查是否有 failed_attempts 欄位
+
+        # 檢查資料表結構
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'role'")
+        has_role = cursor.fetchone() is not None
         cursor.execute("SHOW COLUMNS FROM users LIKE 'failed_attempts'")
         has_failed_attempts = cursor.fetchone() is not None
-        
-        if has_failed_attempts:
+
+        # 根據資料表結構插入數據
+        if has_role and has_failed_attempts:
+            # 新版資料庫：有 role 和 failed_attempts 欄位
+            cursor.execute(
+                '''INSERT INTO users (username, role, password, display_name, email, phone, failed_attempts)
+                   VALUES (%s, %s, %s, %s, %s, %s, 0)''',
+                (username, role, hashed_password, display_name or username, email, phone)
+            )
+        elif has_role:
+            # 有 role 但沒有 failed_attempts
+            cursor.execute(
+                '''INSERT INTO users (username, role, password, display_name, email, phone)
+                   VALUES (%s, %s, %s, %s, %s, %s)''',
+                (username, role, hashed_password, display_name or username, email, phone)
+            )
+        elif has_failed_attempts:
+            # 舊版資料庫：只有 failed_attempts
             cursor.execute(
                 'INSERT INTO users (username, password, failed_attempts) VALUES (%s, %s, 0)',
                 (username, hashed_password)
             )
         else:
+            # 最舊版資料庫：只有基本欄位
             cursor.execute(
                 'INSERT INTO users (username, password) VALUES (%s, %s)',
                 (username, hashed_password)
             )
+
+        user_id = cursor.lastrowid
+
+        # 如果是商家，創建商家資料
+        if role == 'merchant' and has_role:
+            business_name = data.get('business_name', display_name or username)
+            cursor.execute(
+                '''INSERT INTO merchants (user_id, business_name) VALUES (%s, %s)''',
+                (user_id, business_name)
+            )
+
         conn.commit()
         conn.close()
-        
+
         return jsonify({
             'message': '註冊成功',
-            'username': username
+            'username': username,
+            'role': role
         }), 201
-    
+
     except Exception as e:
         return jsonify({'message': str(e)}), 500
 
@@ -392,29 +439,70 @@ def login():
         # 驗證用戶
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            'SELECT id, username, email, password, display_name, line_id, google_id FROM users WHERE username = %s',
-            (username,)
-        )
+
+        # 檢查是否有 role 欄位
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'role'")
+        has_role = cursor.fetchone() is not None
+
+        if has_role:
+            cursor.execute(
+                'SELECT id, username, email, password, display_name, role, phone, line_id, google_id FROM users WHERE username = %s',
+                (username,)
+            )
+        else:
+            cursor.execute(
+                'SELECT id, username, email, password, display_name, line_id, google_id FROM users WHERE username = %s',
+                (username,)
+            )
+
         user = cursor.fetchone()
-        conn.close()
-        
+
         if not user or not user.get('password') or not check_password_hash(user['password'], password):
+            conn.close()
             record_failed_login(username)
             return jsonify({'message': '帳號或密碼錯誤'}), 401
-        
+
+        # 如果是商家，獲取商家資訊
+        merchant_info = None
+        if has_role and user.get('role') == 'merchant':
+            cursor.execute(
+                'SELECT id, business_name, business_type, address, logo_url, is_verified, rating FROM merchants WHERE user_id = %s',
+                (user['id'],)
+            )
+            merchant_info = cursor.fetchone()
+
+        conn.close()
+
         # 重置失敗次數
         reset_failed_attempts(username)
-        
+
         # 建立 JWT token
         access_token = create_access_token(identity=user['id'])
-        
-        return jsonify({
+
+        response_data = {
             'message': '登入成功',
             'token': access_token,
             'user': user['username'],
+            'role': user.get('role', 'customer') if has_role else 'customer',
+            'display_name': user.get('display_name'),
+            'email': user.get('email'),
+            'phone': user.get('phone'),
             'expires_in': 1800
-        }), 200
+        }
+
+        # 如果是商家，添加商家資訊
+        if merchant_info:
+            response_data['merchant'] = {
+                'id': merchant_info['id'],
+                'business_name': merchant_info['business_name'],
+                'business_type': merchant_info.get('business_type'),
+                'address': merchant_info.get('address'),
+                'logo_url': merchant_info.get('logo_url'),
+                'is_verified': bool(merchant_info.get('is_verified')),
+                'rating': float(merchant_info.get('rating', 0))
+            }
+
+        return jsonify(response_data), 200
     
     except Exception as e:
         return jsonify({'message': str(e)}), 500
@@ -427,29 +515,65 @@ def get_profile():
     """取得當前登入使用者的個人資料"""
     try:
         user_id = get_jwt_identity()
-        
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            'SELECT id, username, email, display_name, line_id, google_id FROM users WHERE id = %s',
-            (user_id,)
-        )
+
+        # 檢查是否有 role 欄位
+        cursor.execute("SHOW COLUMNS FROM users LIKE 'role'")
+        has_role = cursor.fetchone() is not None
+
+        if has_role:
+            cursor.execute(
+                'SELECT id, username, email, display_name, role, phone, line_id, google_id FROM users WHERE id = %s',
+                (user_id,)
+            )
+        else:
+            cursor.execute(
+                'SELECT id, username, email, display_name, line_id, google_id FROM users WHERE id = %s',
+                (user_id,)
+            )
+
         user = cursor.fetchone()
-        conn.close()
-        
+
         if not user:
+            conn.close()
             return jsonify({'message': '用戶不存在'}), 404
-        
-        return jsonify({
+
+        response_data = {
             'message': 'test success',
             'user_id': user['id'],
             'username': user['username'],
             'email': user.get('email'),
             'display_name': user.get('display_name'),
+            'role': user.get('role', 'customer') if has_role else 'customer',
+            'phone': user.get('phone'),
             'is_line_linked': bool(user.get('line_id')),
             'is_google_linked': bool(user.get('google_id'))
-        }), 200
-    
+        }
+
+        # 如果是商家，獲取商家資訊
+        if has_role and user.get('role') == 'merchant':
+            cursor.execute(
+                'SELECT id, business_name, business_type, address, description, logo_url, is_verified, rating FROM merchants WHERE user_id = %s',
+                (user_id,)
+            )
+            merchant_info = cursor.fetchone()
+            if merchant_info:
+                response_data['merchant'] = {
+                    'id': merchant_info['id'],
+                    'business_name': merchant_info['business_name'],
+                    'business_type': merchant_info.get('business_type'),
+                    'address': merchant_info.get('address'),
+                    'description': merchant_info.get('description'),
+                    'logo_url': merchant_info.get('logo_url'),
+                    'is_verified': bool(merchant_info.get('is_verified')),
+                    'rating': float(merchant_info.get('rating', 0))
+                }
+
+        conn.close()
+        return jsonify(response_data), 200
+
     except Exception as e:
         return jsonify({'message': str(e)}), 500
 

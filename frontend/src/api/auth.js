@@ -51,11 +51,13 @@ export const authApi = {
     })
   },
 
-  register: (username, password, confirmPassword) => {
+  register: (username, password, confirmPassword, role = 'customer', additionalData = {}) => {
     return api.post('/api/register', {
       username,
       password,
-      confirm_password: confirmPassword
+      confirm_password: confirmPassword,
+      role,
+      ...additionalData
     })
   },
 
