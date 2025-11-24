@@ -50,9 +50,42 @@ GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
 GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:5000/api/callback/google')
 GOOGLE_LINK_REDIRECT_URI = os.getenv('GOOGLE_LINK_REDIRECT_URI', 'http://localhost:5000/api/callback/link/google')
 
-# 取得資料庫連接
+# ==================== 資料庫連接管理 ====================
+
+# 資料庫欄位快取（避免重複檢查）
+_db_columns_cache = {}
+
 def get_db_connection():
+    """取得資料庫連接"""
     return pymysql.connect(**DB_CONFIG)
+
+def check_column_exists(table, column):
+    """檢查資料表欄位是否存在（帶快取）"""
+    cache_key = f"{table}.{column}"
+    if cache_key in _db_columns_cache:
+        return _db_columns_cache[cache_key]
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"SHOW COLUMNS FROM {table} LIKE %s", (column,))
+        exists = cursor.fetchone() is not None
+        conn.close()
+        _db_columns_cache[cache_key] = exists
+        return exists
+    except Exception:
+        return False
+
+def execute_with_connection(func):
+    """資料庫連接裝飾器，自動管理連接的開啟和關閉"""
+    def wrapper(*args, **kwargs):
+        conn = get_db_connection()
+        try:
+            result = func(conn, *args, **kwargs)
+            return result
+        finally:
+            conn.close()
+    return wrapper
 
 # 驗證碼生成器
 def generate_captcha_image(text, width=200, height=80):
@@ -144,74 +177,57 @@ def verify_captcha_token(token, answer):
             return False, '驗證碼錯誤'
         
         return True, None
-    except Exception as e:
+    except Exception:
         return False, '驗證碼驗證失敗'
 
 def check_account_lockout(username):
     """檢查帳號是否被鎖定"""
+    if not check_column_exists('users', 'lockout_until'):
+        return False, None
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        # 先檢查欄位是否存在
-        cursor.execute("SHOW COLUMNS FROM users LIKE 'lockout_until'")
-        has_lockout = cursor.fetchone() is not None
-        
-        if not has_lockout:
-            conn.close()
-            return False, None
-        
         cursor.execute(
             'SELECT failed_attempts, lockout_until FROM users WHERE username = %s',
             (username,)
         )
         user = cursor.fetchone()
         conn.close()
-        
-        if not user:
+
+        if not user or not user.get('lockout_until'):
             return False, None
-        
-        if user.get('lockout_until'):
-            lockout_time = user['lockout_until']
-            if isinstance(lockout_time, datetime):
-                if lockout_time > datetime.now():
-                    return True, lockout_time
-            elif isinstance(lockout_time, str):
-                lockout_time = datetime.fromisoformat(lockout_time.replace('Z', '+00:00'))
-                if lockout_time > datetime.now():
-                    return True, lockout_time
-        
+
+        lockout_time = user['lockout_until']
+        if isinstance(lockout_time, str):
+            lockout_time = datetime.fromisoformat(lockout_time.replace('Z', '+00:00'))
+
+        if isinstance(lockout_time, datetime) and lockout_time > datetime.now():
+            return True, lockout_time
+
         return False, None
     except Exception:
-        # 如果發生錯誤（例如欄位不存在），返回未鎖定
         return False, None
 
 def record_failed_login(username):
     """記錄登入失敗"""
+    if not check_column_exists('users', 'failed_attempts'):
+        return
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 檢查欄位是否存在
-        cursor.execute("SHOW COLUMNS FROM users LIKE 'failed_attempts'")
-        has_failed_attempts = cursor.fetchone() is not None
-        
-        if not has_failed_attempts:
-            conn.close()
-            return
-        
         cursor.execute(
             'SELECT failed_attempts FROM users WHERE username = %s',
             (username,)
         )
         user = cursor.fetchone()
-        
+
         if user:
             failed_attempts = (user.get('failed_attempts') or 0) + 1
-            
+            has_lockout = check_column_exists('users', 'lockout_until')
+
             # 5 次失敗後鎖定 30 分鐘
-            cursor.execute("SHOW COLUMNS FROM users LIKE 'lockout_until'")
-            has_lockout = cursor.fetchone() is not None
-            
             if failed_attempts >= 5 and has_lockout:
                 lockout_until = datetime.now() + timedelta(minutes=30)
                 cursor.execute(
@@ -223,31 +239,22 @@ def record_failed_login(username):
                     'UPDATE users SET failed_attempts = %s WHERE username = %s',
                     (failed_attempts, username)
                 )
-            
+
             conn.commit()
-        
         conn.close()
     except Exception:
-        # 如果發生錯誤（例如欄位不存在），忽略
         pass
 
 def reset_failed_attempts(username):
     """重置登入失敗次數"""
+    if not check_column_exists('users', 'failed_attempts'):
+        return
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 檢查欄位是否存在
-        cursor.execute("SHOW COLUMNS FROM users LIKE 'failed_attempts'")
-        has_failed_attempts = cursor.fetchone() is not None
-        
-        if not has_failed_attempts:
-            conn.close()
-            return
-        
-        cursor.execute("SHOW COLUMNS FROM users LIKE 'lockout_until'")
-        has_lockout = cursor.fetchone() is not None
-        
+        has_lockout = check_column_exists('users', 'lockout_until')
+
         if has_lockout:
             cursor.execute(
                 'UPDATE users SET failed_attempts = 0, lockout_until = NULL WHERE username = %s',
@@ -258,11 +265,10 @@ def reset_failed_attempts(username):
                 'UPDATE users SET failed_attempts = 0 WHERE username = %s',
                 (username,)
             )
-        
+
         conn.commit()
         conn.close()
     except Exception:
-        # 如果發生錯誤（例如欄位不存在），忽略
         pass
 
 # ==================== 驗證碼 API ====================
@@ -671,6 +677,84 @@ def change_password():
     except Exception as e:
         return jsonify({'message': str(e)}), 500
 
+# ==================== OAuth 輔助函數 ====================
+
+def find_or_create_oauth_user(provider_id, provider_name, display_name=None, email=None):
+    """
+    查找或創建 OAuth 用戶
+
+    Args:
+        provider_id: OAuth 提供者的用戶 ID
+        provider_name: 提供者名稱 ('line' 或 'google')
+        display_name: 顯示名稱
+        email: 電子郵件
+
+    Returns:
+        user_id: 用戶 ID
+        username: 用戶名
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 根據提供者查找用戶
+    id_column = f'{provider_name}_id'
+    cursor.execute(f'SELECT id, username FROM users WHERE {id_column} = %s', (provider_id,))
+    user = cursor.fetchone()
+
+    if user:
+        # 登入現有用戶
+        user_id = user['id']
+        username = user['username']
+    else:
+        # 創建新用戶
+        username = f"{provider_name}_{provider_id[:8]}"
+        cursor.execute(
+            f'INSERT INTO users (username, {id_column}, display_name, email) VALUES (%s, %s, %s, %s)',
+            (username, provider_id, display_name, email)
+        )
+        conn.commit()
+        user_id = cursor.lastrowid
+
+    conn.close()
+    return user_id, username
+
+def create_oauth_redirect_url(user_id, username, provider):
+    """
+    創建 OAuth 回調重定向 URL
+
+    Args:
+        user_id: 用戶 ID
+        username: 用戶名
+        provider: OAuth 提供者名稱
+
+    Returns:
+        redirect_url: 重定向 URL
+    """
+    access_token = create_access_token(identity=user_id)
+    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+    redirect_url = f"{frontend_url}/oauth/callback?token={quote(access_token)}&user={quote(username)}&provider={provider}"
+    return redirect_url
+
+def create_oauth_error_redirect(error_msg, provider):
+    """
+    創建 OAuth 錯誤重定向 URL
+
+    Args:
+        error_msg: 錯誤訊息
+        provider: OAuth 提供者名稱
+
+    Returns:
+        redirect_url: 重定向 URL
+    """
+    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+    # 安全地處理錯誤訊息
+    try:
+        error_msg.encode('utf-8')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        error_msg = '登入過程中發生錯誤，請重試'
+    redirect_url = f"{frontend_url}/oauth/callback?error={quote(error_msg, safe='')}&provider={provider}"
+    return redirect_url
+
 # ==================== OAuth 登入/註冊 API ====================
 
 @app.route('/api/login/line/init', methods=['GET'])
@@ -799,56 +883,14 @@ def line_callback():
             email = None
         
         # 查找或創建用戶
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # 檢查是否已有此 LINE ID 的用戶
-        cursor.execute('SELECT id, username FROM users WHERE line_id = %s', (line_id,))
-        user = cursor.fetchone()
-        
-        if user:
-            # 登入現有用戶
-            user_id = user['id']
-        else:
-            # 創建新用戶
-            username = f"line_{line_id[:8]}"
-            cursor.execute(
-                'INSERT INTO users (username, line_id, display_name, email) VALUES (%s, %s, %s, %s)',
-                (username, line_id, display_name, email)
-            )
-            conn.commit()
-            user_id = cursor.lastrowid
-        
-        conn.close()
-        
-        # 生成 JWT token
-        access_token_jwt = create_access_token(identity=user_id)
-        
-        # 獲取用戶名
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT username FROM users WHERE id = %s', (user_id,))
-        user = cursor.fetchone()
-        conn.close()
-        
-        # 重定向到前端 OAuth 回調頁面，並在 URL 中傳遞 token
-        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        username = user['username'] if user else ''
-        # 使用 quote 編碼 URL 參數，避免特殊字符導致編碼錯誤
-        redirect_url = f"{frontend_url}/oauth/callback?token={quote(access_token_jwt)}&user={quote(username)}&provider=line"
+        user_id, username = find_or_create_oauth_user(line_id, 'line', display_name, email)
+
+        # 創建重定向 URL
+        redirect_url = create_oauth_redirect_url(user_id, username, 'line')
         return redirect(redirect_url)
     
     except Exception as e:
-        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        # 安全地處理錯誤訊息，避免編碼問題
-        try:
-            error_msg = str(e)
-            # 嘗試編碼為 UTF-8，如果失敗則使用簡化訊息
-            error_msg.encode('utf-8')
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            error_msg = '登入過程中發生錯誤，請重試'
-        # 編碼錯誤訊息
-        redirect_url = f"{frontend_url}/oauth/callback?error={quote(error_msg, safe='')}&provider=line"
+        redirect_url = create_oauth_error_redirect(str(e), 'line')
         return redirect(redirect_url)
 
 @app.route('/api/callback/google', methods=['GET'])
@@ -908,50 +950,14 @@ def google_callback():
         display_name = userinfo_data.get('name')
         
         # 查找或創建用戶
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # 檢查是否已有此 Google ID 的用戶
-        cursor.execute('SELECT id, username FROM users WHERE google_id = %s', (google_id,))
-        user = cursor.fetchone()
-        
-        if user:
-            # 登入現有用戶
-            user_id = user['id']
-        else:
-            # 創建新用戶
-            username = f"google_{google_id[:8]}"
-            cursor.execute(
-                'INSERT INTO users (username, google_id, display_name, email) VALUES (%s, %s, %s, %s)',
-                (username, google_id, display_name, email)
-            )
-            conn.commit()
-            user_id = cursor.lastrowid
-        
-        conn.close()
-        
-        # 生成 JWT token
-        access_token_jwt = create_access_token(identity=user_id)
-        
-        # 獲取用戶名
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT username FROM users WHERE id = %s', (user_id,))
-        user = cursor.fetchone()
-        conn.close()
-        
-        # 重定向到前端 OAuth 回調頁面，並在 URL 中傳遞 token
-        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        username = user['username'] if user else ''
-        # 使用 quote 編碼 URL 參數，避免特殊字符導致編碼錯誤
-        redirect_url = f"{frontend_url}/oauth/callback?token={quote(access_token_jwt)}&user={quote(username)}&provider=google"
+        user_id, username = find_or_create_oauth_user(google_id, 'google', display_name, email)
+
+        # 創建重定向 URL
+        redirect_url = create_oauth_redirect_url(user_id, username, 'google')
         return redirect(redirect_url)
-    
+
     except Exception as e:
-        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        error_msg = str(e)
-        # 編碼錯誤訊息
-        redirect_url = f"{frontend_url}/oauth/callback?error={quote(error_msg)}&provider=google"
+        redirect_url = create_oauth_error_redirect(str(e), 'google')
         return redirect(redirect_url)
 
 # ==================== OAuth 綁定 API ====================
